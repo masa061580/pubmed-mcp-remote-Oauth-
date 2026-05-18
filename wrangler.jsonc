@@ -1,0 +1,26 @@
+{
+	"$schema": "https://json.schemastore.org/wrangler.json",
+	"name": "pubmed-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-04-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// KV namespace for OAuth token storage
+	// Run: wrangler kv namespace create OAUTH_KV
+	// Then update the id below
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "<YOUR_KV_NAMESPACE_ID>"
+		}
+	]
+	// Secrets (set via `wrangler secret put`):
+	// - GOOGLE_CLIENT_ID
+	// - GOOGLE_CLIENT_SECRET
+	// - COOKIE_ENCRYPTION_KEY  (openssl rand -hex 32)
+	//
+	// Optional environment variables:
+	// [vars]
+	// NCBI_API_KEY = ""
+}

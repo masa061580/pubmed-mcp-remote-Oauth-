@@ -1,0 +1,26 @@
+{
+  "name": "pubmed-mcp-server",
+  "version": "1.0.0",
+  "description": "PubMed MCP Server with Google OAuth on Cloudflare Workers",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.0.5",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "he": "^1.2.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250410.0",
+    "@types/he": "^1.2.3",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.5",
+    "wrangler": "^4.14.0"
+  }
+}
