@@ -456,12 +456,7 @@ export class PubMedClient {
       );
       const year = this.extractNestedTag(content, "PubDate", "Year") || "Unknown";
 
-      const authors: string[] = [];
-      const authorRegex =
-        /<Author[^>]*>[\s\S]*?<LastName>([\s\S]*?)<\/LastName>[\s\S]*?<ForeName>([\s\S]*?)<\/ForeName>[\s\S]*?<\/Author>/g;
-      while ((match = authorRegex.exec(content)) !== null) {
-        authors.push(htmlDecode(`${match[2].trim()} ${match[1].trim()}`));
-      }
+      const authors = this.parseAuthors(content);
 
       let doi: string | null = null;
       const doiMatch = content.match(/<ArticleId\s+IdType="doi">([\s\S]*?)<\/ArticleId>/);
@@ -965,6 +960,41 @@ export class PubMedClient {
 
   private stripTags(text: string): string {
     return text.replace(/<[^>]+>/g, "");
+  }
+
+  /**
+   * Parse the author list from a PubmedArticle's XML.
+   *
+   * Restricted to the <AuthorList> block so consortium papers (e.g. PMID
+   * 25176015 with 1184 <Investigator> collaborators) never get scanned. Each
+   * <Author> element is sliced out and parsed in isolation — a single
+   * cross-element regex with nested lazy quantifiers backtracks catastrophically
+   * on group authors that lack <LastName>/<ForeName>, which can block the
+   * Worker for the request's lifetime and hang the MCP endpoint.
+   */
+  private parseAuthors(content: string): string[] {
+    const listMatch = content.match(/<AuthorList[^>]*>([\s\S]*?)<\/AuthorList>/);
+    const listXml = listMatch ? listMatch[1] : "";
+    if (!listXml) return [];
+
+    const authors: string[] = [];
+    // Split on each <Author ...> / <Author> opening; "<AuthorList" is not matched.
+    const parts = listXml.split(/<Author[\s>]/).slice(1);
+    for (const part of parts) {
+      const endIdx = part.indexOf("</Author>");
+      const authorXml = endIdx >= 0 ? part.slice(0, endIdx) : part;
+
+      const last = this.extractTag(authorXml, "LastName");
+      if (last) {
+        const fore = this.extractTag(authorXml, "ForeName");
+        authors.push(htmlDecode(fore ? `${fore} ${last}` : last));
+        continue;
+      }
+      // Group / consortium author (no personal name).
+      const collective = this.extractTag(authorXml, "CollectiveName");
+      if (collective) authors.push(htmlDecode(collective));
+    }
+    return authors;
   }
 }
 
