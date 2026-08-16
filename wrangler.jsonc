@@ -6,13 +6,14 @@
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
-	// KV namespace for OAuth token storage
-	// Run: wrangler kv namespace create OAUTH_KV
-	// Then update the id below
+	// Custom domain pubmed-mcp.med-ai-lounge.com is attached via the
+	// Cloudflare dashboard (not managed here); workers.dev URL stays enabled.
+	// KV namespace for OAuth token storage + per-user NCBI API keys (ncbi_key:<sub>).
+	// If cloning this repo: wrangler kv namespace create OAUTH_KV, then update the id.
 	"kv_namespaces": [
 		{
 			"binding": "OAUTH_KV",
-			"id": "<YOUR_KV_NAMESPACE_ID>"
+			"id": "e3d6267e8ff244fb9fae32a971098371"
 		}
 	]
 	// Secrets (set via `wrangler secret put`):

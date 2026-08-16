@@ -85,3 +85,18 @@ Minimal RIS format: PMID, title, first author, journal, year, DOI. Citation mana
 - Respect rate limits (3 req/s without key, 10 req/s with key)
 - Use POST for large ID lists
 - Handle 429 with retry
+
+## Per-user NCBI API keys (v1.1.0, 2026-08)
+
+Users can register their own NCBI API key so NCBI's 10 req/s per-key limit applies per user
+instead of sharing the server's fallback `NCBI_API_KEY` secret.
+
+- Tools: `set_ncbi_api_key` (validates against NCBI einfo before saving), `get_ncbi_api_key_status`, `delete_ncbi_api_key`
+- Storage: `OAUTH_KV` under `ncbi_key:<google-sub>` (plaintext). Only the pseudonymous Google `sub`
+  claim is kept (decoded from the id_token in `handleCallback`) — no email/profile data, preserving
+  the no-personal-info design.
+- Key resolution per request (`src/index.ts` McpApiHandler): user's own key → `env.NCBI_API_KEY` → none.
+- Tokens issued before v1.1.0 have empty props (no `sub`): those sessions fall back to the shared key
+  and the management tools ask the user to re-authenticate.
+- URLs: `https://pubmed-mcp.med-ai-lounge.com/mcp` (custom domain, dashboard-managed) and the
+  workers.dev URL coexist.

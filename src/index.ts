@@ -13,6 +13,7 @@ import OAuthProvider, {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { registerTools } from "./tools.js";
+import { registerUserKeyTools, userKeyKvKey } from "./user-key.js";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ export interface Env {
 // ─── MCP API Handler ────────────────────────────────────────────────
 
 const McpApiHandler: ExportedHandler<Env> = {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
@@ -44,10 +45,24 @@ const McpApiHandler: ExportedHandler<Env> = {
     // Create a fresh McpServer + transport per request (stateless mode)
     const server = new McpServer({
       name: "PubMed MCP Server",
-      version: "1.0.0",
+      version: "1.1.0",
     });
 
-    registerTools(server, env.NCBI_API_KEY);
+    // OAuthProvider exposes the grant's props on ctx.props.
+    // `sub` is the user's pseudonymous Google account ID (set in handleCallback);
+    // undefined for tokens issued before per-user key support.
+    const props = (ctx as ExecutionContext & { props?: { sub?: string } }).props;
+    const sub = props?.sub;
+
+    // Per-user NCBI API key takes precedence; server-shared key is the fallback.
+    const ownKey = sub ? await env.OAUTH_KV.get(userKeyKvKey(sub)) : null;
+    registerTools(server, ownKey ?? env.NCBI_API_KEY);
+    registerUserKeyTools(server, {
+      kv: env.OAUTH_KV,
+      sub,
+      hasOwnKey: !!ownKey,
+      sharedKeyAvailable: !!env.NCBI_API_KEY,
+    });
 
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
@@ -96,6 +111,7 @@ const DefaultHandler: ExportedHandler<Env> = {
             "search", "fetch", "fetch_batch", "get_full_text",
             "count", "find_similar_articles", "export_to_ris", "get_citation_counts",
             "convert_ids", "batch_process",
+            "set_ncbi_api_key", "get_ncbi_api_key_status", "delete_ncbi_api_key",
           ],
         }),
         { headers: { "Content-Type": "application/json" } }
@@ -180,19 +196,42 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
     return new Response(`Google token exchange failed: ${errBody}`, { status: 502 });
   }
 
-  const tokens = (await tokenResponse.json()) as { access_token: string };
+  const tokens = (await tokenResponse.json()) as {
+    access_token: string;
+    id_token?: string;
+  };
 
-  // Complete the MCP OAuth flow — issues token to the MCP client
-  // No personal info is collected (scope: openid only)
+  // Complete the MCP OAuth flow — issues token to the MCP client.
+  // Only the pseudonymous Google `sub` claim is kept (needed to scope
+  // per-user NCBI API keys); no email or profile data is collected.
+  const sub = decodeJwtSub(tokens.id_token);
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
     request: oauthReq,
-    userId: "authenticated-user",
+    userId: sub ?? "authenticated-user",
     metadata: { label: "Google User" },
     scope: oauthReq.scope || [],
-    props: {},
+    props: sub ? { sub } : {},
   });
 
   return Response.redirect(redirectTo, 302);
+}
+
+/**
+ * Extract the `sub` claim from a Google id_token. The token was received
+ * directly from Google's token endpoint over TLS, so signature verification
+ * is not required here.
+ */
+function decodeJwtSub(idToken: string | undefined): string | undefined {
+  if (!idToken) return undefined;
+  try {
+    const payload = idToken.split(".")[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as {
+      sub?: unknown;
+    };
+    return typeof json.sub === "string" && json.sub.length > 0 ? json.sub : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ─── Export Worker ──────────────────────────────────────────────────
