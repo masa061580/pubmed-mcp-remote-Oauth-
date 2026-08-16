@@ -11,7 +11,6 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
 
 const KEY_PREFIX = "ncbi_key:";
 
@@ -19,7 +18,7 @@ export function userKeyKvKey(sub: string): string {
   return `${KEY_PREFIX}${sub}`;
 }
 
-function maskKey(key: string): string {
+export function maskKey(key: string): string {
   return key.length <= 8 ? "****" : `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
@@ -27,7 +26,7 @@ function maskKey(key: string): string {
  * Functional validation: hit einfo with the key. NCBI responds with
  * HTTP 400 / "API key invalid" for bad keys.
  */
-async function validateNcbiKey(key: string): Promise<{ ok: boolean; detail: string }> {
+export async function validateNcbiKey(key: string): Promise<{ ok: boolean; detail: string }> {
   const url =
     "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/einfo.fcgi?retmode=json&api_key=" +
     encodeURIComponent(key);
@@ -59,43 +58,20 @@ const REAUTH_HINT =
   "Your session token predates per-user key support, so your account ID is not available. " +
   "Disconnect and reconnect (re-authenticate) this MCP server, then try again.";
 
+// NOTE: There is intentionally no set_ncbi_api_key tool. Registering a key
+// through chat would expose the secret in the conversation log, and assistants
+// rightly refuse to handle pasted credentials. Registration happens on the
+// key-settings page shown right after Google sign-in (see renderKeyPage in
+// index.ts) — reconnecting the MCP server brings the page up.
+
 export function registerUserKeyTools(server: McpServer, ctx: UserKeyContext) {
-  // ─── set_ncbi_api_key ─────────────────────────────────────────────
-  server.tool(
-    "set_ncbi_api_key",
-    "Register your own NCBI API key for this account. Your PubMed requests will then use your " +
-      "personal 10 req/s NCBI rate limit instead of the server's shared key. " +
-      "Get a free key at NCBI Account Settings (https://account.ncbi.nlm.nih.gov/settings/). " +
-      "The key is validated against NCBI before saving.",
-    {
-      api_key: z.string().min(20).max(80).describe("Your NCBI API key from account.ncbi.nlm.nih.gov/settings"),
-    },
-    async ({ api_key }) => {
-      if (!ctx.sub) return textResult({ ok: false, error: REAUTH_HINT });
-
-      const key = api_key.trim();
-      const check = await validateNcbiKey(key);
-      if (!check.ok) {
-        return textResult({
-          ok: false,
-          error: "NCBI rejected this API key — please check for typos.",
-          ncbi_response: check.detail,
-        });
-      }
-
-      await ctx.kv.put(userKeyKvKey(ctx.sub), key);
-      return textResult({
-        ok: true,
-        message: `NCBI API key ${maskKey(key)} saved. From your next request onward, searches use your personal key (10 req/s dedicated to you).`,
-      });
-    }
-  );
-
   // ─── get_ncbi_api_key_status ──────────────────────────────────────
   server.tool(
     "get_ncbi_api_key_status",
     "Show whether your own NCBI API key is registered for this account, and which key " +
-      "(personal or server-shared) your requests currently use.",
+      "(personal or server-shared) your requests currently use. To register or update a key, " +
+      "disconnect and reconnect this MCP server — a key-settings page appears right after " +
+      "Google sign-in (never paste API keys into chat).",
     {},
     async () => {
       if (!ctx.sub) {

@@ -91,7 +91,12 @@ Minimal RIS format: PMID, title, first author, journal, year, DOI. Citation mana
 Users can register their own NCBI API key so NCBI's 10 req/s per-key limit applies per user
 instead of sharing the server's fallback `NCBI_API_KEY` secret.
 
-- Tools: `set_ncbi_api_key` (validates against NCBI einfo before saving), `get_ncbi_api_key_status`, `delete_ncbi_api_key`
+- Registration UI (v1.2.0): a key-settings page is shown right after Google sign-in in the
+  OAuth flow (`/callback` renders it; form posts to `/callback/complete` with a one-time nonce
+  stored as `pending_auth:<nonce>` in KV). Keys are validated against NCBI einfo before saving.
+  There is deliberately NO chat tool for setting keys — pasting secrets into chat exposes them
+  in conversation logs and assistants refuse to handle them.
+- Chat tools: `get_ncbi_api_key_status`, `delete_ncbi_api_key` (read/delete only, no secrets)
 - Storage: `OAUTH_KV` under `ncbi_key:<google-sub>` (plaintext). Only the pseudonymous Google `sub`
   claim is kept (decoded from the id_token in `handleCallback`) — no email/profile data, preserving
   the no-personal-info design.
