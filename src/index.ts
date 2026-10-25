@@ -8,6 +8,7 @@
  */
 
 import OAuthProvider, {
+  AuthorizationError,
   type OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -34,7 +35,7 @@ export interface Env {
 
 // ─── MCP API Handler ────────────────────────────────────────────────
 
-const McpApiHandler: ExportedHandler<Env> = {
+const McpApiHandler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
@@ -109,11 +110,11 @@ const McpApiHandler: ExportedHandler<Env> = {
       headers,
     });
   },
-};
+} satisfies ExportedHandler<Env>;
 
 // ─── Default Handler (handles /authorize, /callback, and all other non-API routes) ───
 
-const DefaultHandler: ExportedHandler<Env> = {
+const DefaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
@@ -154,13 +155,24 @@ const DefaultHandler: ExportedHandler<Env> = {
 
     return new Response("Not Found", { status: 404 });
   },
-};
+} satisfies ExportedHandler<Env>;
 
 // ─── /authorize ─────────────────────────────────────────────────────
 
 async function handleAuthorize(request: Request, env: Env): Promise<Response> {
-  // Parse the MCP client's OAuth request via OAuthHelpers
-  const oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+  // Parse the MCP client's OAuth request via OAuthHelpers.
+  // Since 1.x, invalid requests throw AuthorizationError; redirect the error
+  // back to the client when the library validated its redirect_uri.
+  let oauthReq: Awaited<ReturnType<OAuthHelpers["parseAuthRequest"]>>;
+  try {
+    oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+  } catch (e) {
+    if (e instanceof AuthorizationError) {
+      if (e.redirectTo) return Response.redirect(e.redirectTo, 302);
+      return new Response(`Invalid authorization request: ${e.message}`, { status: 400 });
+    }
+    throw e;
+  }
   if (!oauthReq.clientId) {
     return new Response("Missing client_id", { status: 400 });
   }
@@ -448,16 +460,41 @@ function decodeJwtSub(idToken: string | undefined): string | undefined {
 
 // ─── Export Worker ──────────────────────────────────────────────────
 
-// The library types its handlers with `unknown` env generics while ours are
-// typed as Env; the shapes are runtime-compatible, so bridge the generics.
-type ProviderOptions = ConstructorParameters<typeof OAuthProvider>[0];
+// workers-oauth-provider 1.x binds every token to one canonical resource
+// (RFC 8707). This Worker is served on two hostnames (custom domain and
+// workers.dev), and MCP clients send the URL they connect to as `resource`,
+// so build one provider per origin with `${origin}/mcp` as its resource.
+// Grants issued by 0.x carry no resource and bind on their next refresh.
+const providers = new Map<string, OAuthProvider<Env>>();
 
-export default new OAuthProvider({
-  apiRoute: "/mcp",
-  apiHandler: McpApiHandler as unknown as ProviderOptions["apiHandler"],
-  defaultHandler: DefaultHandler as unknown as ProviderOptions["defaultHandler"],
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
-  scopesSupported: ["openid"],
-});
+function providerFor(origin: string): OAuthProvider<Env> {
+  let provider = providers.get(origin);
+  if (!provider) {
+    provider = new OAuthProvider<Env>({
+      apiRoute: "/mcp",
+      apiHandler: McpApiHandler,
+      defaultHandler: DefaultHandler,
+      authorizeEndpoint: "/authorize",
+      tokenEndpoint: "/token",
+      clientRegistrationEndpoint: "/register",
+      scopesSupported: ["openid"],
+      resourceMetadata: {
+        resource: `${origin}/mcp`,
+        authorization_servers: [origin],
+      },
+      // Wire responses stay generic; log the internal reason for diagnostics
+      // (e.g. grant_audience_unbound after the 1.x migration).
+      onError: ({ code, status, internal }) => {
+        console.error(`oauth ${status} ${code} ${internal.category}/${internal.reason}`);
+      },
+    });
+    providers.set(origin, provider);
+  }
+  return provider;
+}
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return providerFor(new URL(request.url).origin).fetch(request, env, ctx);
+  },
+} satisfies ExportedHandler<Env>;

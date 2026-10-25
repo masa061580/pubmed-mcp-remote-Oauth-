@@ -40,7 +40,9 @@ wrangler secret put NCBI_API_KEY                # Optional
 ## Architecture
 
 ### Entry Point (`src/index.ts`)
-- `OAuthProvider` wraps the entire worker
+- `OAuthProvider` (workers-oauth-provider 1.x) wraps the entire worker. It is built per request
+  origin with `resourceMetadata.resource = ${origin}/mcp`, because the Worker is served on both
+  the custom domain and workers.dev and 1.x binds every token to one canonical resource (RFC 8707)
 - `/mcp` route → `McpApiHandler` (authenticated MCP endpoint)
 - `/authorize` → redirects to Google OAuth consent
 - `/callback` → exchanges Google code for tokens, completes MCP OAuth flow
