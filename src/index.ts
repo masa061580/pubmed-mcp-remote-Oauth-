@@ -47,6 +47,28 @@ const McpApiHandler: ExportedHandler<Env> = {
       });
     }
 
+    // Stateless mode has no server-initiated notifications, so the standalone
+    // GET SSE stream would never emit anything. Return 405 so MCP clients stop
+    // re-opening it (otherwise the Workers runtime kills the hung stream and
+    // clients reconnect in a tight loop).
+    if (request.method === "GET") {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Method not allowed." },
+          id: null,
+        }),
+        {
+          status: 405,
+          headers: {
+            Allow: "POST, DELETE, OPTIONS",
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      );
+    }
+
     // Create a fresh McpServer + transport per request (stateless mode)
     const server = new McpServer({
       name: "PubMed MCP Server",
