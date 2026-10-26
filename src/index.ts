@@ -177,9 +177,14 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
     return new Response("Missing client_id", { status: 400 });
   }
 
-  // Store the parsed OAuth request in KV so /callback can complete the flow
-  const stateKey = `oauth_state:${oauthReq.state}`;
-  await env.OAUTH_KV.put(stateKey, JSON.stringify(oauthReq), {
+  // Store the parsed OAuth request in KV so /callback can complete the flow.
+  // The KV key uses a server-generated nonce rather than the client's `state`:
+  // KV keys are limited to 512 bytes and some clients (e.g. Gemini) send a
+  // state of 1000+ chars, and a missing state would otherwise collide on
+  // "oauth_state:undefined". The client's state stays inside oauthReq and is
+  // echoed back by completeAuthorization.
+  const flowId = crypto.randomUUID();
+  await env.OAUTH_KV.put(`oauth_state:${flowId}`, JSON.stringify(oauthReq), {
     expirationTtl: 600,
   });
 
@@ -191,7 +196,7 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
   googleAuthUrl.searchParams.set("redirect_uri", callbackUrl);
   googleAuthUrl.searchParams.set("response_type", "code");
   googleAuthUrl.searchParams.set("scope", "openid");
-  googleAuthUrl.searchParams.set("state", oauthReq.state);
+  googleAuthUrl.searchParams.set("state", flowId);
   googleAuthUrl.searchParams.set("access_type", "online");
   googleAuthUrl.searchParams.set("prompt", "consent");
 
